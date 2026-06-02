@@ -8,12 +8,12 @@ preguntas clave de negocio mediante SQL analítico avanzado.
 
 ## Reportes
 
-| Archivo                          | Descripción                                      | Conceptos clave                     |
-| -------------------------------- | ------------------------------------------------ | ----------------------------------- |
-| `reporte_clientes_vip.sql`       | Top 20% clientes por gasto con evolución mensual | PERCENT_RANK, LAG, running total    |
-| `reporte_geografia.sql`          | Ingresos por país y ciudad con subtotales        | ROLLUP, GROUPING()                  |
-| `reporte_peliculas_estrella.sql` | Top 3 películas más rentables por categoría      | LATERAL, porcentaje de contribución |
-| `reporte_habitos_alquiler.sql`   | Últimos 2 alquileres de clientes VIP             | LATERAL, LAG, EXISTS                |
+| Archivo                             | Descripción                                      | Conceptos clave                     |
+| ----------------------------------- | ------------------------------------------------ | ----------------------------------- |
+| `reporte_clientes_vip.sql`          | Top 20% clientes por gasto con evolución mensual | PERCENT_RANK, LAG, running total    |
+| `reporte_rendimiento_geografia.sql` | Ingresos por país y ciudad con subtotales        | ROLLUP, GROUPING()                  |
+| `reporte_peliculas_estrella.sql`    | Top 3 películas más rentables por categoría      | LATERAL, porcentaje de contribución |
+| `reporte_habitos_alquiler.sql`      | Últimos 2 alquileres de clientes VIP             | LATERAL, LAG, EXISTS                |
 
 ## Desiciones de diseño destacadas
 
