@@ -22,11 +22,14 @@ vip_customers AS (
 
 -- Diferencia de dias entre los 2 pagos mas recientes de cada cliente VIP
 SELECT vc.customer_id,
+	c.first_name || ' ' || c.last_name AS full_name,
     recent.payment_id,
     recent.amount,
     recent.payment_date,
     recent.days_elapsed
 FROM vip_customers vc
+INNER JOIN customer c
+	ON vc.customer_id = c.customer_id
 CROSS JOIN LATERAL (
 	SELECT p.payment_id,
 		p.amount,
@@ -37,6 +40,6 @@ CROSS JOIN LATERAL (
 		) AS days_elapsed
 	FROM payment p
 	WHERE p.customer_id = vc.customer_id
-	ORDER BY p.payment_id DESC
+	ORDER BY p.payment_date DESC
 	LIMIT 2
 ) recent;

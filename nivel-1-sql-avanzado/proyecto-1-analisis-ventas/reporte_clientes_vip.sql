@@ -38,6 +38,7 @@ vip_monthly_stats AS (
 
 -- Tendencia respecto al mes anterior y gasto acumulado mes a mes
 SELECT vms.customer_id,
+	c.first_name || ' ' || c.last_name AS full_name,
 	vms.month,
 	vms.monthly_spent AS curr_monthly_spent,
 	LAG(vms.monthly_spent, 1, 0) OVER w AS prev_monthly_spent,
@@ -53,5 +54,7 @@ SELECT vms.customer_id,
 FROM vip_monthly_stats vms
 INNER JOIN vip_only vo
 	ON vms.customer_id = vo.customer_id
+INNER JOIN customer c
+	ON vms.customer_id = c.customer_id
 WINDOW w AS (PARTITION BY vms.customer_id ORDER BY vms.month)
 ORDER BY vo.spent_rank, vms.month;
