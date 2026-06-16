@@ -21,20 +21,14 @@ last_month AS (
     FROM payment
 )
 
--- Reporte correspondiente a los últimos 6 meses
+-- Reporte correspondiente a los últimos 6 meses respecto al mes del último pago realizado
 SELECT category,
-	MAX(CASE WHEN month = last_month - INTERVAL '5 month' 
-        THEN total_revenue END) AS "Feb 2006",
-    MAX(CASE WHEN month = last_month - INTERVAL '4 month' 
-        THEN total_revenue END) AS "Mar 2006",
-    MAX(CASE WHEN month = last_month - INTERVAL '3 month' 
-        THEN total_revenue END) AS "Apr 2006",
-    MAX(CASE WHEN month = last_month - INTERVAL '2 month' 
-        THEN total_revenue END) AS "May 2006",
-    MAX(CASE WHEN month = last_month - INTERVAL '1 month' 
-        THEN total_revenue END) AS "Jun 2006",
-    MAX(CASE WHEN month = last_month 
-        THEN total_revenue END) AS "Jul 2006"
+	MAX(total_revenue) FILTER (WHERE month = last_month - INTERVAL '5 month') AS "Feb 2006",
+	MAX(total_revenue) FILTER (WHERE month = last_month - INTERVAL '4 month') AS "Mar 2006",
+	MAX(total_revenue) FILTER (WHERE month = last_month - INTERVAL '3 month') AS "Apr 2006",
+	MAX(total_revenue) FILTER (WHERE month = last_month - INTERVAL '2 month') AS "May 2006",
+	MAX(total_revenue) FILTER (WHERE month = last_month - INTERVAL '1 month') AS "Jun 2006",
+	MAX(total_revenue) FILTER (WHERE month = last_month) AS "Jul 2006"
 FROM category_monthly_revenue
 CROSS JOIN last_month
 GROUP BY category;
