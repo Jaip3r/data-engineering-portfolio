@@ -29,21 +29,29 @@ físicos y distribución de páginas. **Mediciones tomadas con fecha de 19/06/20
 | store         | 8.192 kB     | 32 kB          | 2     | 1       | 2                |
 | category      | 8.192 kB     | 16 kB          | 12    | 1       | 12               |
 
-### 2.3 Hallazgo: densidad de filas dispar
+### 2.3 Hallazgo: paradoja de tamaño vs volumen de filas
 
-Se identificó una diferencia significativa en bytes/fila entre tablas:
+Se identificó una disparidad significativa entre el número de filas y
+el espacio físico ocupado entre tablas:
 
-- `film`: ~727 bytes/fila (11 filas por página)
-- `film_actor`: ~44 bytes/fila (182 filas por página)
-- `inventory`: ~45 bytes/fila (183 filas por página)
+| Tabla      | Filas | Páginas | Bytes/fila |
+| ---------- | ----- | ------- | ---------- |
+| film       | 1000  | 88      | ~727       |
+| film_actor | 5462  | 30      | ~44        |
+| inventory  | 4851  | 25      | ~45        |
 
-**Causa:** `film` contiene columnas `TEXT` (`description`), `TEXT[]` (`special_features`) y
-`TSVECTOR` (`fulltext`) que inflan el tamaño de fila. `film_actor` e `inventory` solo contienen
-columnas numéricas y timestamp.
+A pesar de tener **5x menos filas**, `film` ocupa casi **3x más páginas**
+que `film_actor` debido a una densidad de filas radicalmente dispar:
+en `film` caben solo 11 filas por página de 8 Kb, mientras que en `film_actor`
+e `inventory` caben 182 filas por página.
 
-**Impacto:** Un sequential scan sobre `film` es ~16x más costoso por fila
-que uno sobre `film_actor` o `inventory`, debido al menor número de filas que caben por
-página de 8kB.
+**Causa:** `film` contiene columnas de tipo `TEXT` (`description`), `TEXT[]` (`special_features`) y
+`TSVECTOR` (`fulltext`) que inflan el tamaño de cada fila. `film_actor` e `inventory` solo contienen
+principalmente columnas numéricas y timestamps.
+
+**Impacto:** Un sequential scan sobre `film` requiere leer 88 páginas para 1000 filas,
+mientras que un sequential scan sobre `film_actor` lee solo 30 páginas para 5462 filas.
+Esto significa que **en términos de I/O, escanear `film` completamente es ~3x más costoso que escanear `film_actor`**, a pesar de tener muchas menos filas.
 
 ### 2.4 Verificación de orden físico vs lógico
 
@@ -64,3 +72,9 @@ Se ejecutó `pg_indexes` sobre el esquema `public`, identificando
 39 índices distribuidos en 15 tablas.
 
 ### 3.2 Índices con mayor utilización
+
+| Tabla      | Índice             | Usos (idx_scan) | Filas leídas |
+| ---------- | ------------------ | --------------- | ------------ |
+| film       | film_pkey          | 1,110,868       | 1,110,868    |
+| film_actor | idx_fk_film_id     | 305,000         | 1,671,784    |
+| payment    | idx_fk_customer_id | 3,326           | 683,921      |
