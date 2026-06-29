@@ -69,7 +69,7 @@ nativo como SQL Server).
 ### 3.1 Inventario completo
 
 Se ejecutó `pg_indexes` sobre el esquema `public`, identificando
-39 índices distribuidos en 15 tablas.
+32 índices distribuidos en 15 tablas.
 
 ### 3.2 Índices con mayor utilización
 
@@ -78,3 +78,77 @@ Se ejecutó `pg_indexes` sobre el esquema `public`, identificando
 | film       | film_pkey          | 1,110,868       | 1,110,868    |
 | film_actor | idx_fk_film_id     | 305,000         | 1,671,784    |
 | payment    | idx_fk_customer_id | 3,326           | 683,921      |
+
+**Análisis**: Los 3 índices más usados corresponden a claves primarias y foráneas
+involucradas en JOINs frecuentes. El alto `idx_scan` de `film_pkey` (1,110,868)
+refleja que prácticamente todas las consultas del nivel 1 resuelven `film_id -> film`
+en algún punto de su cadena de JOINs, incluyendo el sistema de recomendación donde esta
+resolución ocurre una vez por cada cliente evaluado (600 clientes) dentro de un LATERAL JOIN.
+
+El patrón general observado: **Los índices más usados son consistentementes los de PKs y FKs que participan en JOINs**,
+no los de columnas de búsqueda textual. Esto es típico de cargas de trabajo analíticas (OLAP)
+donde el acceso es principalmente por relaciones entre entidades, no por filtros sobre atributos.
+
+### 3.3 Índices sin uso detectado
+
+| Tabla    | Índice              | Usos (idx_scan) |
+| -------- | ------------------- | --------------- |
+| customer | idx_last_name       | 0               |
+| film     | idx_title           | 0               |
+| actor    | idx_actor_last_name | 0               |
+
+**Análisis**: Estos índices no fueron utilizados durante el periodo auditado debido
+a que la carga de trabajo ejecutada (Niveles 1-2) no incluyó búsquedas textuales
+puntuales (`WHERE last_name = ...`), únicamente agregaciones, JOINs y análisis temporal.
+
+**Recomendación**: No eliminar estos índices sin antes confirmar que la aplicación real
+no los necesita. En un entorno real, se recomendaría monitorear `idx_scan` durante algunas
+semanas de tráfico real antes de decidir su eliminación.
+
+### 3.4 Brecha crítica: ausencia de índice dedicado sobre `rental.customer_id`
+
+**Problema identificado:** `rental` no contaba con un índice dedicado sobre `customer_id`. El único índice que incluye
+esta columna es el compuesto `idx_unq_rental_rental_date_inventory_id_customer_id` sobre `(rental_date, inventory_id, customer_id)`.
+Por la regla de prefijo izquierdo, este índice no puede ser utilizado para consultas que filtren exclusivamente por `customer_id`.
+
+**Impacto:** Consultas de negocio frecuentes como `WHERE customer_id = X` sobre `rental` forzaban un sequential scan
+completo de las 150 páginas de la tabla.
+
+Seq Scan on rental (cost=0.00..350.55 rows=8040)
+Filter: (customer_id = 100)
+Rows Removed by Filter: 16020
+Execution Time: 1.817 ms
+
+**Corrección aplicada:**
+
+```sql
+CREATE INDEX idx_rental_customer_id ON rental(customer_id);
+```
+
+**Evidencia (después de la corrección):**
+
+Bitmap Heap Scan on rental
+Heap Blocks: exact=22 (vs 150 páginas del sequential scan)
+Execution Time: 0.075 ms
+
+**Resultado:** Reducción de páginas leídas de 150 a 22 (~85% menos I/O) y mejora de tiempo de ejecución
+de 1.817ms a 0.075ms (~24x más rápido).
+
+### 3.5 Hallazgo curioso: GIST en lugar de GIN
+
+```sql
+"film","film_fulltext_idx","... USING gist (fulltext)"
+```
+
+El índice de búsqueda de texto completo usa GIST en vez de GIN. Ambos
+son válidos para `TSVECTOR`, pero representan un trade-off distinto:
+
+| Aspecto                | GIN   | GIST  |
+| ---------------------- | ----- | ----- |
+| Velocidad de búsqueda  | Mayor | Menor |
+| Velocidad de escritura | Menor | Mayor |
+| Tamaño en disco        | Mayor | Menor |
+
+Dado que `film` es un catálogo de bajo volumen de escritura y alto
+volumen de lectura, **GIN sería la elección más apropiada** si se
+priorizara velocidad de búsqueda sobre tamaño en disco.
