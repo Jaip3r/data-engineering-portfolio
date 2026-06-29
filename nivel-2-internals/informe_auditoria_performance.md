@@ -11,23 +11,23 @@ físicos y distribución de páginas. **Mediciones tomadas con fecha de 19/06/20
 
 ### 2.2 Tablas por tamaño físico
 
-| Tabla         | Tamaño datos | Tamaño índices | Filas | Páginas | Filas por Página |
-| ------------- | ------------ | -------------- | ----- | ------- | ---------------- |
-| rental        | 1200 kB      | 1288 kB        | 16044 | 150     | 107              |
-| payment       | 864 kB       | 952 kB         | 14596 | 108     | 135              |
-| film          | 704 kB       | 232 kB         | 1000  | 88      | 11               |
-| film_actor    | 240 kB       | 248 kB         | 5462  | 30      | 182              |
-| inventory     | 200 kB       | 240 kB         | 4581  | 25      | 183              |
-| customer      | 72 kB        | 136 kB         | 599   | 9       | 66               |
-| address       | 64 kB        | 88 kB          | 603   | 8       | 75               |
-| film_category | 48 kB        | 64 kB          | 1000  | 6       | 166              |
-| city          | 40 kB        | 72 kB          | 600   | 5       | 120              |
-| actor         | 16 kB        | 56 kB          | 200   | 2       | 100              |
-| staff         | 8.192 kB     | 24 kB          | 2     | 1       | 2                |
-| country       | 8.192 kB     | 16 kB          | 109   | 1       | 109              |
-| language      | 8.192 kB     | 16 kB          | 6     | 1       | 6                |
-| store         | 8.192 kB     | 32 kB          | 2     | 1       | 2                |
-| category      | 8.192 kB     | 16 kB          | 12    | 1       | 12               |
+| Tabla         | Tamaño datos | Tamaño índices | Filas  | Páginas | Filas por Página |
+| ------------- | ------------ | -------------- | ------ | ------- | ---------------- |
+| rental        | 1200 kB      | 1288 kB        | 16,044 | 150     | 107              |
+| payment       | 864 kB       | 952 kB         | 14,596 | 108     | 135              |
+| film          | 704 kB       | 232 kB         | 1,000  | 88      | 11               |
+| film_actor    | 240 kB       | 248 kB         | 5,462  | 30      | 182              |
+| inventory     | 200 kB       | 240 kB         | 4,581  | 25      | 183              |
+| customer      | 72 kB        | 136 kB         | 599    | 9       | 66               |
+| address       | 64 kB        | 88 kB          | 603    | 8       | 75               |
+| film_category | 48 kB        | 64 kB          | 1,000  | 6       | 166              |
+| city          | 40 kB        | 72 kB          | 600    | 5       | 120              |
+| actor         | 16 kB        | 56 kB          | 200    | 2       | 100              |
+| staff         | 8.192 kB     | 24 kB          | 2      | 1       | 2                |
+| country       | 8.192 kB     | 16 kB          | 109    | 1       | 109              |
+| language      | 8.192 kB     | 16 kB          | 6      | 1       | 6                |
+| store         | 8.192 kB     | 32 kB          | 2      | 1       | 2                |
+| category      | 8.192 kB     | 16 kB          | 12     | 1       | 12               |
 
 ### 2.3 Hallazgo: paradoja de tamaño vs volumen de filas
 
@@ -36,9 +36,9 @@ el espacio físico ocupado entre tablas:
 
 | Tabla      | Filas | Páginas | Bytes/fila |
 | ---------- | ----- | ------- | ---------- |
-| film       | 1000  | 88      | ~727       |
-| film_actor | 5462  | 30      | ~44        |
-| inventory  | 4851  | 25      | ~45        |
+| film       | 1,000 | 88      | ~727       |
+| film_actor | 5,462 | 30      | ~44        |
+| inventory  | 4,851 | 25      | ~45        |
 
 A pesar de tener **5x menos filas**, `film` ocupa casi **3x más páginas**
 que `film_actor` debido a una densidad de filas radicalmente dispar:
@@ -152,3 +152,77 @@ son válidos para `TSVECTOR`, pero representan un trade-off distinto:
 Dado que `film` es un catálogo de bajo volumen de escritura y alto
 volumen de lectura, **GIN sería la elección más apropiada** si se
 priorizara velocidad de búsqueda sobre tamaño en disco.
+
+## 4. Caso de Particionamiento
+
+### 4.1 Hipótesis
+
+Se evaluó si el particionamieto de la tabla `payment` por rango de `payment_date` mejora
+el rendimiento de consultas que combinan filtro temporal y filtro de cliente, comparado
+con la tabla `payment` original (sin particionar).
+
+### 4.2 Metodología
+
+Se creó `payment_partitioned`, particionada por mes (`RANGE`), con 5 particiones (Enero-Mayo 2007),
+poblada con los mismos datos de `payment`. Se indexó `customer_id` en la tabla particionada.
+
+### 4.3 Consultas de prueba
+
+**Consulta A:**
+
+```sql
+EXPLAIN ANALYZE
+SELECT *
+FROM payment_partitioned
+WHERE payment_date >= '2007-03-01' AND payment_date < '2007-04-01';
+```
+
+**Consulta B:**
+
+```sql
+EXPLAIN ANALYZE
+SELECT *
+FROM payment_partitioned
+WHERE customer_id = 100;
+```
+
+**Consulta C:**
+
+```sql
+EXPLAIN ANALYZE
+SELECT *
+FROM payment_partitioned
+WHERE payment_date >= '2007-03-01' AND payment_date < '2007-04-01'
+    AND customer_id = 100;
+```
+
+### 4.4 Resultados comparativos
+
+| Consulta | Filtro              | Particiones consultadas | Tiempo ejecución |
+| -------- | ------------------- | ----------------------- | ---------------- |
+| A        | Solo fecha          | 1 de 5                  | 0.609 ms         |
+| B        | Solo customer_id    | 5 de 5                  | 0.918 ms         |
+| C        | Fecha + customer_id | 1 de 5                  | 0.068 ms         |
+
+### 4.5 Análsis de resultados
+
+**Consulta A** confirma partition pruning efectivo: Con filtro de fecha, PostgreSQL
+descartó 4 de 5 particiones en tiempo de planificación, sin necesidad de leerlas.
+
+**Consulta B** demuestra el riesgo de particionar sin disciplina de consulta: Al no
+incluir la clave de particionamiento en el WHERE, las 5 particiones fueron consultadas
+via operador el `Append`, que combina resultados de múltiples particiones como si fueran
+una sola tabla. A diferencia de la consulta A donde el plan solo muestra una partición,
+aquí el plan muestra 5 nodos hijo independientes, incluyendo `payment_p_2007_01` que no contenía
+resultados (`rows=0`), representando trabajo desperdiciado.
+
+**Consulta C** es el caso óptimo: Combina partition pruning (reduce de 14,596 a ~ 5,644
+filas candidatas) con índice local sobre `customer_id` (reduce a las 5 filas exactas).
+Resultado: **9x más rápida que A** y **13x más rápida que B**.
+
+### 4.6 Conclusión
+
+En el tamaño actual del dataset (14,596 filas), el particionamiento no se justifica por si
+solo: el overhead de gestionar particiones pequeñas puede superar el beneficio. Sin embargo,
+el experimento demuestra que, **a escala de producción** (millones de filas), el patrón de
+fecha + índice local sería significativamente más eficiente que una tabla monolítica.
