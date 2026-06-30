@@ -226,3 +226,87 @@ En el tamaño actual del dataset (14,596 filas), el particionamiento no se justi
 solo: el overhead de gestionar particiones pequeñas puede superar el beneficio. Sin embargo,
 el experimento demuestra que, **a escala de producción** (millones de filas), el patrón de
 fecha + índice local sería significativamente más eficiente que una tabla monolítica.
+
+## 5. Optimización de una Consulta Real
+
+### 5.1 Consulta auditada
+
+Reporte de rendimiento geográfico (Proyecto 1, Nivel 1), que combina 5 tablas
+via INNER JOIN con agregación ROLLUP.
+
+### 5.2 Plan de ejecución obtenido
+
+Sort (cost=2116.82..2153.59 rows=14706 width=122) (actual time=20.618..20.645 rows=706 loops=1)
+Sort Key: (GROUPING(co.country)), co.country, (GROUPING(ci.city)), ci.city
+Sort Method: quicksort Memory: 75kB
+-> MixedAggregate (cost=66.00..1098.86 rows=14706 width=122) (actual time=19.383..19.592 rows=706 loops=1)
+Hash Key: co.country, ci.city
+Hash Key: co.country
+Group Key: ()
+Batches: 1 Memory Usage: 929kB
+-> Hash Join (cost=66.00..475.51 rows=14596 width=24) (actual time=1.720..12.779 rows=14596 loops=1)
+Hash Cond: (ci.country_id = co.country_id)
+-> Hash Join (cost=62.55..432.25 rows=14596 width=17) (actual time=1.618..10.674 rows=14596 loops=1)
+Hash Cond: (a.city_id = ci.city_id)
+-> Hash Join (cost=44.05..375.17 rows=14596 width=8) (actual time=0.973..7.710 rows=14596 loops=1)
+Hash Cond: (c.address_id = a.address_id)
+-> Hash Join (cost=22.48..315.02 rows=14596 width=8) (actual time=0.545..5.249 rows=14596 loops=1)
+Hash Cond: (p.customer_id = c.customer_id)
+-> Seq Scan on payment p (cost=0.00..253.96 rows=14596 width=8) (actual time=0.006..1.410 rows=14596 loops=1)
+-> Hash (cost=14.99..14.99 rows=599 width=6) (actual time=0.511..0.511 rows=599 loops=1)
+Buckets: 1024 Batches: 1 Memory Usage: 31kB
+-> Seq Scan on customer c (cost=0.00..14.99 rows=599 width=6) (actual time=0.006..0.394 rows=599 loops=1)
+-> Hash (cost=14.03..14.03 rows=603 width=6) (actual time=0.401..0.402 rows=603 loops=1)
+Buckets: 1024 Batches: 1 Memory Usage: 31kB
+-> Seq Scan on address a (cost=0.00..14.03 rows=603 width=6) (actual time=0.006..0.275 rows=603 loops=1)
+-> Hash (cost=11.00..11.00 rows=600 width=15) (actual time=0.396..0.396 rows=600 loops=1)
+Buckets: 1024 Batches: 1 Memory Usage: 37kB
+-> Seq Scan on city ci (cost=0.00..11.00 rows=600 width=15) (actual time=0.031..0.141 rows=600 loops=1)
+-> Hash (cost=2.09..2.09 rows=109 width=13) (actual time=0.084..0.084 rows=109 loops=1)
+Buckets: 1024 Batches: 1 Memory Usage: 14kB
+-> Seq Scan on country co (cost=0.00..2.09 rows=109 width=13) (actual time=0.043..0.051 rows=109 loops=1)
+Planning Time: 4.834 ms
+Execution Time: 21.217 ms
+
+### 5.3 Decisiones del optimizador identificadas
+
+1. **Algoritmo de JOIN:** Hash Join en las 4 uniones, no nested loops ni Merge Join.
+   Justificación: Todas las tablas de dimensión (`customer`, `address`, `city`, `country`) son pequeñas
+   y caben como hash en memoria.
+
+2. **Orden de evaluación:** La tabla más grande (`payment`, 14,596 filas) se mantiene como lado exterior
+   en cada Hash Join; las tablas pequeñas se hashean.
+
+3. **Patrón de cascada:** los 4 Hash Joins están anidados de forma que el resultado de cada uno alimenta al
+   siguiente como lado exterior. El orden de construcción de las hash tables, de más interno a más externo, es:
+
+   customer (599 filas, 31kB) → hash table 1
+   address (603 filas, 31kB) → hash table 2
+   city (600 filas, 37kB) → hash table 3
+   country (109 filas, 14kB) → hash table 4
+
+4. **MixedAggregate:** Operador específico de PostgreSQL para consultas con `ROLLUP`, `CUBE` o `GROUPING SETS`.
+   En lugar de hacer múltiples pasadas por los datos (una por cada nivel de agrupación), combina todos los niveles en una sola pasada:
+   - `Hash Key: co.country, ci.city` → agrupación detallada
+   - `Hash Key: co.country` → subtotal por país
+   - `Group Key: ()` → total general
+
+   Esto es más eficiente que ejecutar tres `GROUP BY` separados con `UNION ALL`,
+   que requeriría tres escaneos completos de los datos de entrada.
+
+### 5.4 Costo medio
+
+Planning Time: 4.834 ms | Execution Time: 21.217 ms
+
+El planning time es considerablemente mayor que en consultas de una sola tabla,
+esto se explica por la explosión combinatoria de posibles órdenes de JOIN para 5 tablas
+(hasta 5! = 120 combinaciones para 5 tablas). Adicionalmente, la presencia de `ROLLUP`
+agrega complejidad al planning porque el optimizador debe evaluar cómo combinar eficientemente
+los múltiples niveles de agrupación.
+
+### 5.5 Conclusión
+
+El plan generado es óptimo para el tamaño actual de las tablas. No se identificaron oportunidades
+de mejora mediante indices adicionales, dado que la consulta se hace sobre la totalidad de filas y
+las tablas de dimensión son suficientemente pequeñas para que Seq Scan + Hash sea más eficiente que
+una alternativa basada en índices.
