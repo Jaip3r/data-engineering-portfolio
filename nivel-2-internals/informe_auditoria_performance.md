@@ -129,10 +129,12 @@ Por la regla de prefijo izquierdo, este índice no puede ser utilizado para cons
 **Impacto:** Consultas de negocio frecuentes como `WHERE customer_id = X` sobre `rental` forzaban un sequential scan
 completo de las 150 páginas de la tabla.
 
+```text
 Seq Scan on rental (cost=0.00..350.55 rows=8040)
 Filter: (customer_id = 100)
 Rows Removed by Filter: 16020
 Execution Time: 1.817 ms
+```
 
 **Corrección aplicada:**
 
@@ -142,9 +144,11 @@ CREATE INDEX idx_rental_customer_id ON rental(customer_id);
 
 **Evidencia (después de la corrección):**
 
+```text
 Bitmap Heap Scan on rental
 Heap Blocks: exact=22 (vs 150 páginas del sequential scan)
 Execution Time: 0.075 ms
+```
 
 **Resultado:** Reducción de páginas leídas de 150 a 22 (~85% menos I/O) y mejora de tiempo de ejecución
 de 1.817ms a 0.075ms (~24x más rápido).
